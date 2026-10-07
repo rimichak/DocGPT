@@ -218,3 +218,12 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+cat >> .gitignore << 'EOF'
+
+# node (React frontend)
+node_modules/
+
+# local vector database and uploaded PDFs (used later)
+backend/chroma_db/
+backend/uploads/
+EOF
