@@ -1,7 +1,7 @@
 // All backend communication lives in this one file.
 
 // Flip to false once the FastAPI backend is running.
-const USE_MOCK = true;
+const USE_MOCK = false;
 
 // "/api" is a relative URL. Vite's proxy forwards it to FastAPI.
 const BASE = "/api";
