@@ -1,16 +1,16 @@
+import logging
 import uuid
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
-from app import config  # noqa: F401  (importing it validates the .env key at startup)
+from app import vector_store
+from app.llm import embed_texts, generate_answer
 from app.pdf_utils import chunk_pages, extract_pages
 
+log = logging.getLogger("docgpt")
 app = FastAPI(title="DocGPT API")
-
-# Temporary storage: doc_id -> {"filename": ..., "chunks": [...]}.
-# It is lost on restart. We replace it with ChromaDB in the next step.
-DOCS: dict[str, dict] = {}
 
 MAX_MB = 20
 
@@ -25,7 +25,7 @@ async def upload(file: UploadFile = File(...)):
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
 
-    data = await file.read()  # the whole file as bytes
+    data = await file.read()
     if len(data) > MAX_MB * 1024 * 1024:
         raise HTTPException(status_code=413, detail=f"File is larger than {MAX_MB} MB.")
 
@@ -39,9 +39,16 @@ async def upload(file: UploadFile = File(...)):
 
     chunks = chunk_pages(pages)
     doc_id = uuid.uuid4().hex
-    DOCS[doc_id] = {"filename": file.filename, "chunks": chunks}
 
-    # This shape matches what the React app expects.
+    try:
+        # embed_texts is a blocking network call, so run it in a worker thread
+        # to keep the async server free for other requests.
+        vectors = await run_in_threadpool(embed_texts, [c["text"] for c in chunks], "RETRIEVAL_DOCUMENT")
+    except Exception:
+        log.exception("Embedding failed")
+        raise HTTPException(status_code=502, detail="Embedding service failed. Check your API key and quota.")
+
+    vector_store.add_chunks(doc_id, file.filename, chunks, vectors)
     return {"doc_id": doc_id, "filename": file.filename, "chunks": len(chunks)}
 
 
@@ -51,14 +58,25 @@ class ChatRequest(BaseModel):
 
 
 @app.post("/chat")
-def chat(req: ChatRequest):
-    doc = DOCS.get(req.doc_id)
-    if not doc:
+def chat(req: ChatRequest):  # plain def: FastAPI runs it in a thread pool automatically
+    question = req.question.strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="Question cannot be empty.")
+
+    try:
+        query_vector = embed_texts([question], "RETRIEVAL_QUERY")[0]
+    except Exception:
+        log.exception("Query embedding failed")
+        raise HTTPException(status_code=502, detail="Embedding service failed. Check your API key and quota.")
+
+    sources = vector_store.search(req.doc_id, query_vector, k=4)
+    if not sources:
         raise HTTPException(status_code=404, detail="Document not found. Please upload it again.")
 
-    # Placeholder until we add embeddings and the LLM. It returns the first two chunks as "sources".
-    sources = [{"page": c["page"], "text": c["text"][:300]} for c in doc["chunks"][:2]]
-    return {
-        "answer": "Your document was uploaded and split into chunks. The real AI answer comes in the next step.",
-        "sources": sources,
-    }
+    try:
+        answer = generate_answer(question, sources)
+    except Exception:
+        log.exception("Answer generation failed")
+        raise HTTPException(status_code=502, detail="The AI service failed. Check the model name and quota.")
+
+    return {"answer": answer, "sources": sources}
