@@ -14,6 +14,16 @@ app = FastAPI(title="DocGPT API")
 
 MAX_MB = 20
 
+# HTTP codes from Google that mean "busy or temporary problem".
+BUSY_CODES = {429, 500, 502, 503, 504}
+
+
+def ai_error(e: Exception) -> HTTPException:
+    """Turn an AI service failure into a safe message for the user."""
+    if getattr(e, "code", None) in BUSY_CODES:
+        return HTTPException(status_code=503, detail="The AI service is busy right now. Please try again in a minute.")
+    return HTTPException(status_code=502, detail="The AI service failed. Please try again.")
+
 
 @app.get("/health")
 def health():
@@ -44,9 +54,9 @@ async def upload(file: UploadFile = File(...)):
         # embed_texts is a blocking network call, so run it in a worker thread
         # to keep the async server free for other requests.
         vectors = await run_in_threadpool(embed_texts, [c["text"] for c in chunks], "RETRIEVAL_DOCUMENT")
-    except Exception:
+    except Exception as e:
         log.exception("Embedding failed")
-        raise HTTPException(status_code=502, detail="Embedding service failed. Check your API key and quota.")
+        raise ai_error(e)
 
     vector_store.add_chunks(doc_id, file.filename, chunks, vectors)
     return {"doc_id": doc_id, "filename": file.filename, "chunks": len(chunks)}
@@ -65,9 +75,9 @@ def chat(req: ChatRequest):  # plain def: FastAPI runs it in a thread pool autom
 
     try:
         query_vector = embed_texts([question], "RETRIEVAL_QUERY")[0]
-    except Exception:
+    except Exception as e:
         log.exception("Query embedding failed")
-        raise HTTPException(status_code=502, detail="Embedding service failed. Check your API key and quota.")
+        raise ai_error(e)
 
     sources = vector_store.search(req.doc_id, query_vector, k=4)
     if not sources:
@@ -75,8 +85,8 @@ def chat(req: ChatRequest):  # plain def: FastAPI runs it in a thread pool autom
 
     try:
         answer = generate_answer(question, sources)
-    except Exception:
+    except Exception as e:
         log.exception("Answer generation failed")
-        raise HTTPException(status_code=502, detail="The AI service failed. Check the model name and quota.")
+        raise ai_error(e)
 
     return {"answer": answer, "sources": sources}

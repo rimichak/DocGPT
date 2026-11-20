@@ -13,9 +13,10 @@ if not GEMINI_API_KEY:
     raise RuntimeError("GEMINI_API_KEY is missing. Add it to backend/.env")
 
 # Model names live here so they can be changed without touching other code.
-# Optional overrides can be set in .env (EMBED_MODEL, CHAT_MODEL).
+# Optional overrides can be set in .env or in Render (EMBED_MODEL, CHAT_MODEL, CHAT_FALLBACK_MODEL).
 EMBED_MODEL = os.getenv("EMBED_MODEL", "gemini-embedding-001")
-CHAT_MODEL = os.getenv("CHAT_MODEL", "gemini-2.5-flash")
+CHAT_MODEL = os.getenv("CHAT_MODEL", "gemini-flash-latest")
+CHAT_FALLBACK_MODEL = os.getenv("CHAT_FALLBACK_MODEL", "gemini-flash-lite-latest")
 
 # ChromaDB saves its files here: backend/chroma_db (already in .gitignore).
 CHROMA_PATH = str(Path(__file__).resolve().parent.parent / "chroma_db")
