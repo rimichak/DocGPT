@@ -1,5 +1,5 @@
 {
   "rewrites": [
-    { "source": "/api/:path*", "destination": "https://YOUR-RENDER-SERVICE.onrender.com/:path*" }
+    { "source": "/api/:path*", "destination": "https://docgpt-srgg.onrender.com/:path*" }
   ]
 }
